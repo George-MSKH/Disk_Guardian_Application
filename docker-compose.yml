@@ -7,5 +7,8 @@ services:
       # we pull this from local computer's environment
       - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
       - DISK_THRESHOLD=80.0
+      - CPU_THRESHOLD=75.0
+      - MEM_THRESHOLD=80.0
     volumes:
       - /:/host:ro # We gave Read-Only permission to script to have only read access to not change anything
+      - ./app/logs:/app/logs 

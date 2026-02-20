@@ -1,0 +1,11 @@
+services:
+  disk-guardian:
+    build: ./app
+    container_name: disk-guardian-agent
+    restart: always
+    environment:
+      # we pull this from local computer's environment
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}
+      - DISK_THRESHOLD=80.0
+    volumes:
+      - /:/host:ro # We gave Read-Only permission to script to have only read access to not change anything

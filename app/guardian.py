@@ -1,7 +1,6 @@
 import psutil
 import time
 import os
-import json 
 import requests
 from dotenv import load_dotenv
 
@@ -12,18 +11,23 @@ load_dotenv()
 # ==============================
 
 CHECK_PATH = "/host" if os.path.exists("/host") else "/"
+
 THRESHOLD = {
     "disk": float(os.getenv("DISK_THRESHOLD", "80.0")),
     "cpu": float(os.getenv("CPU_THRESHOLD", "75.0")),
     "memory": float(os.getenv("MEM_THRESHOLD", "80.0"))
 }
-CHECK_INTERVAL = 10  # seconds
-ALERT_COOLDOWN = 300  # seconds (5 minutes)
+
+CHECK_INTERVAL = 10
+ALERT_COOLDOWN = 300
 
 WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL")
 
 if not WEBHOOK_URL:
     print("WARNING: SLACK_WEBHOOK_URL not set. Alerts are disabled.")
+
+
+LOG_FILE = "logs/system.log"
 
 # ==============================
 # Alert Function
@@ -33,7 +37,7 @@ def send_alert(message):
     if not WEBHOOK_URL:
         return
 
-    payload = {"text": f"Disk Guardian Alert: {message}"}
+    payload = {"text": f"System Resource Monitor Alert: {message}"}
 
     try:
         response = requests.post(WEBHOOK_URL, json=payload, timeout=5)
@@ -46,82 +50,46 @@ def send_alert(message):
     except Exception as e:
         print(f"Failed to send alert: {e}")
 
-
 # ==============================
-# Log setup
-# ==============================
-
-
-HEARTBEAT_LOG_FILE = f"logs/heartbeat_log_{time.strftime('%Y-%m-%d_%H-%M-%S')}.json"
-ALERT_LOG_FILE = f"logs/alert_log_{time.strftime('%Y-%m-%d_%H-%M-%S')}.json"
-
-# ==============================
-# Logging functions
+# Logging Function (Readable)
 # ==============================
 
-def log_heartbeat(resource, usage_percent, free_gb=None):
+def log_resource(resource, usage_percent, free_gb=None):
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
 
-    entry = {
-        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "resource": resource,
-        "usage_percent": usage_percent,
-        "free_gb": free_gb
-    }
+    if free_gb is not None:
+        line = f"{timestamp} | {resource.upper()} {usage_percent}% ({free_gb}GB free)\n"
+    else:
+        line = f"{timestamp} | {resource.upper()} {usage_percent}%\n"
 
-    try:
-        with open(HEARTBEAT_LOG_FILE, "r") as f:
-            logs = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        logs = []
-    logs.append(entry)
-    with open (HEARTBEAT_LOG_FILE, "w") as f:
-        json.dump(logs, f, indent=2)
+    with open(LOG_FILE, "a") as f:
+        f.write(line)
 
-def log_alert(resource, usage_percent, free_gb=None, alert_type="HIGH"):
-    entry = {
-        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "resource": resource,
-        "usage_percent": usage_percent,
-        "free_gb": free_gb,
-        "alert": alert_type
-    }
+def log_separator():
+    with open(LOG_FILE, "a") as f:
+        f.write("-" * 40 + "\n")
 
-    try:
-        with open(ALERT_LOG_FILE, "r") as f:
-            logs = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        logs = []
-    logs.append(entry)
-    with open (ALERT_LOG_FILE, "w") as f:
-        json.dump(logs, f, indent=2)
 
-        
 # ==============================
-# Resource check functions
+# Resource Checks
 # ==============================
-        
+
 def check_disk():
     stats = psutil.disk_usage(CHECK_PATH)
-    percent = stats.percent
-    free_gb = stats.free // (2**30)
-    return percent, free_gb
+    return stats.percent, stats.free // (2**30)
 
 def check_cpu():
-    percent = psutil.cpu_percent(interval=1)
-    return percent
+    return psutil.cpu_percent(interval=1)
 
 def check_memory():
     mem = psutil.virtual_memory()
-    percent = mem.percent
-    free_gb = mem.available // (2**30)
-    return percent, free_gb
+    return mem.percent, mem.available // (2**30)
 
 # ==============================
 # Monitoring Logic
 # ==============================
 
 def monitor_resources():
-    print(f"--- Monitoring {CHECK_PATH} (Threshold: {THRESHOLD}%) ---")
 
     last_alert_time = {
         "disk": 0,
@@ -133,93 +101,63 @@ def monitor_resources():
         "disk": False,
         "cpu": False,
         "memory": False
-    } 
+    }
 
     while True:
         now = time.time()
 
-        #---------------------
-        # DISK CHECK
-        #---------------------
-
+        # ---- DISK ----
         disk_percent, disk_free = check_disk()
-        print(f"[Disk] Usage: {disk_percent}% | Free: {disk_free}GB")
-        log_heartbeat("disk", disk_percent, free_gb=disk_free)
+        print(f"[Disk] {disk_percent}% | Free {disk_free}GB")
+        log_resource("disk", disk_percent, disk_free)
 
         if disk_percent > THRESHOLD["disk"]:
             if not alert_active["disk"] or (now - last_alert_time["disk"] > ALERT_COOLDOWN):
-                msg = f"Disk usage HIGH on {CHECK_PATH}: {disk_percent}%"
-                print(f"!!! {msg}")
+                msg = f"Disk usage HIGH: {disk_percent}%"
                 send_alert(msg)
-                log_alert("disk", disk_percent, free_gb=disk_free, alert_type="HIGH")
                 last_alert_time["disk"] = now
                 alert_active["disk"] = True
-        else: 
-            if alert_active["disk"]:
-                msg = f"Disk usage RECOVERED on {CHECK_PATH}: {disk_percent}%"
-                print(f"*** {msg}")
-                send_alert(msg)
-                log_alert("disk", disk_percent, free_gb=disk_free, alert_type="RECOVERED")
-                alert_active = False
+        else:
+            alert_active["disk"] = False
 
-        #---------------------
-        # CPU CHECK
-        #---------------------
-
+        # ---- CPU ----
         cpu_percent = check_cpu()
-        print(f"[CPU] Usage: {cpu_percent}%")
-        log_heartbeat("cpu", cpu_percent)
+        print(f"[CPU] {cpu_percent}%")
+        log_resource("cpu", cpu_percent)
 
         if cpu_percent > THRESHOLD["cpu"]:
             if not alert_active["cpu"] or (now - last_alert_time["cpu"] > ALERT_COOLDOWN):
-                msg = f"[CPU] Usage HIGH: {cpu_percent}%"
-                print(f"!!! {msg}")
+                msg = f"CPU usage HIGH: {cpu_percent}%"
                 send_alert(msg)
-                log_alert("cpu", cpu_percent, alert_type="HIGH")
                 last_alert_time["cpu"] = now
-                alert_active = True
+                alert_active["cpu"] = True
         else:
-            if alert_active["cpu"]:
-                msg = f"CPU usage RECOVERED: {cpu_percent}%"
-                print(f"*** {msg}")
-                send_alert(msg)
-                log_alert("cpu", cpu_percent, alert_type="RECOVERED")
-                alert_active = False
+            alert_active["cpu"] = False
 
-        #---------------------
-        # MEMORY CHECK
-        #---------------------
-
+        # ---- MEMORY ----
         mem_percent, mem_free = check_memory()
-        print(f"[Memory] Usage: {mem_percent}% | Free {mem_free}GB")
-        log_heartbeat("memory", mem_percent, free_gb=mem_free)
+        print(f"[Memory] {mem_percent}% | Free {mem_free}GB")
+        log_resource("memory", mem_percent, mem_free)
 
         if mem_percent > THRESHOLD["memory"]:
             if not alert_active["memory"] or (now - last_alert_time["memory"] > ALERT_COOLDOWN):
                 msg = f"Memory usage HIGH: {mem_percent}%"
-                print(f"!!! {msg}")
                 send_alert(msg)
-                log_alert("memory", mem_percent, free_gb=mem_free, alert_type="HIGH")
                 last_alert_time["memory"] = now
-                alert_active = True
+                alert_active["memory"] = True
         else:
-            if alert_active["memory"]:
-                msg = f"Memory usage RECOVERED: {mem_percent}%"
-                print(f"*** {msg}")
-                send_alert(msg)
-                log_alert("memory", mem_percent, free_gb=mem_free, alert_type="RECOVERED")
-                alert_active = False
-                
-        # --------------------
-        # Wait for next check
-        # --------------------
+            alert_active["memory"] = False
+
+
+        log_separator()
+
 
         time.sleep(CHECK_INTERVAL)
 
-
 # ==============================
-# Entry Point
+# Entry
 # ==============================
 
 if __name__ == "__main__":
     monitor_resources()
+

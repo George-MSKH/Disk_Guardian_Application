@@ -73,7 +73,7 @@ A Slack Incoming Webhook URL
 
 Installation & Setup
 1. Clone the Repository
-git clone https://github.com/your-username/disk-guardian.git
+git clone https://github.com/George-MSKH/Disk_Guardian_Application.git
 cd disk-guardian
 
 2. Configure Environment Variables
